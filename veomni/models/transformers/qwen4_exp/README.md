@@ -21,6 +21,8 @@ Supported in this correctness stage:
   runs the gather-based TileLang sparse-attention kernel
   (`veomni/ops/kernels/qsa_attention/`, bf16, NVIDIA CUDA) directly on the local
   query shard and all-gathered KV with full GQA head grouping preserved.
+  `qsa_attention_implementation=npu_ascendc` calls CANN GBSA/GBSAG and requires
+  equal Q/KV lengths, so it is rejected when Ulysses/CP is enabled.
   Explicit cu-seqlens isolate packed samples consistently for SP/CP=1 and SP/CP>1.
 - PLE n-gram token halos and differentiable dilated-convolution halos across
   Ulysses or context-parallel shard boundaries, while persistent PLE table

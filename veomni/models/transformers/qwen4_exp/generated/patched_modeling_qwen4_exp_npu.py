@@ -1300,6 +1300,11 @@ class Qwen4ExpTextAttention(nn.Module):
         sp_enabled, sp_group, sp_rank, sp_size = _qwen4_exp_sequence_parallel_state(parallel_state)
         if sp_enabled and past_key_values is not None:
             raise NotImplementedError("Qwen4-Exp QSA does not support a KV cache under Ulysses/CP.")
+        if sp_enabled and self.veomni_qsa_attn.impl == "npu_ascendc":
+            raise NotImplementedError(
+                "npu_ascendc QSA (GBSA/GBSAG) requires equal query and key sequence lengths. "
+                "Ulysses/CP gathers KV and is unsupported; use qsa_attention_implementation='torch_npu'."
+            )
         if sp_enabled:
             # Every rank must reject an unsupported mask shape before the indexer
             # enters its compressed-row or halo collectives.
@@ -1360,6 +1365,9 @@ class Qwen4ExpTextAttention(nn.Module):
         # --- Patch.3 ---
         # The compact selection already encodes causality and packed-sample
         # boundaries, so the QSA op takes it instead of a dense mask.
+        qsa_kwargs = {}
+        if self.veomni_qsa_attn.impl == "npu_ascendc":
+            qsa_kwargs["block_size"] = self.indexer.compress_ratio
         attn_output, attn_weights = self.veomni_qsa_attn(
             query_states,
             key_states,
@@ -1368,6 +1376,7 @@ class Qwen4ExpTextAttention(nn.Module):
             scaling=self.scaling,
             dropout=0.0 if not self.training else self.attention_dropout,
             attention_mask=attention_mask,
+            **qsa_kwargs,
         )
         # --- Patch.3 ---
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()

@@ -17,8 +17,9 @@ Regen command:
 patchgen veomni.models.transformers.qwen4_exp.qwen4_exp_npu_patch_gen_config -o veomni/models/transformers/qwen4_exp/generated --diff
 
 Qwen4-Exp uses partial interleaved mRoPE and experimental QSA/PLE code paths,
-so this initial NPU build deliberately inherits the device-agnostic GPU patch
-set without adding incompatible fused rotary or attention replacements.
+so this NPU build inherits the device-agnostic GPU patch set. The only
+attention-path change is the AscendC GBSA/GBSAG call, and it stays in this
+file so the GPU patch config and GPU generated modeling stay untouched.
 """
 
 from copy import deepcopy
@@ -43,3 +44,53 @@ for _patch in config.patches:
         break
 else:
     raise RuntimeError("Expected Qwen4ExpTextQSAIndexer.forward in qwen4_exp GPU patch config")
+
+# GBSA/GBSAG is NPU-only. Rewrite the inherited attention forward in place:
+# reject Ulysses/CP for npu_ascendc, and pass block_size only for that impl so
+# eager / torch_npu / tilelang keep their original signatures.
+for _patch in config.patches:
+    if _patch.target == "Qwen4ExpTextAttention.forward":
+        _patch.name_map = {
+            (
+                '    if sp_enabled and past_key_values is not None:\n'
+                '        raise NotImplementedError("Qwen4-Exp QSA does not support a KV cache under Ulysses/CP.")\n'
+                "    if sp_enabled:"
+            ): (
+                '    if sp_enabled and past_key_values is not None:\n'
+                '        raise NotImplementedError("Qwen4-Exp QSA does not support a KV cache under Ulysses/CP.")\n'
+                '    if sp_enabled and self.veomni_qsa_attn.impl == "npu_ascendc":\n'
+                "        raise NotImplementedError(\n"
+                '            "npu_ascendc QSA (GBSA/GBSAG) requires equal query and key sequence lengths. "\n'
+                '            "Ulysses/CP gathers KV and is unsupported; use qsa_attention_implementation=\'torch_npu\'."\n'
+                "        )\n"
+                "    if sp_enabled:"
+            ),
+            (
+                "    attn_output, attn_weights = self.veomni_qsa_attn(\n"
+                "        query_states,\n"
+                "        key_states,\n"
+                "        value_states,\n"
+                "        selection,\n"
+                "        scaling=self.scaling,\n"
+                "        dropout=0.0 if not self.training else self.attention_dropout,\n"
+                "        attention_mask=attention_mask,\n"
+                "    )"
+            ): (
+                "    qsa_kwargs = {}\n"
+                '    if self.veomni_qsa_attn.impl == "npu_ascendc":\n'
+                '        qsa_kwargs["block_size"] = self.indexer.compress_ratio\n'
+                "    attn_output, attn_weights = self.veomni_qsa_attn(\n"
+                "        query_states,\n"
+                "        key_states,\n"
+                "        value_states,\n"
+                "        selection,\n"
+                "        scaling=self.scaling,\n"
+                "        dropout=0.0 if not self.training else self.attention_dropout,\n"
+                "        attention_mask=attention_mask,\n"
+                "        **qsa_kwargs,\n"
+                "    )"
+            ),
+        }
+        break
+else:
+    raise RuntimeError("Expected Qwen4ExpTextAttention.forward in qwen4_exp GPU patch config")

@@ -1548,7 +1548,7 @@ class OpsImplementationConfig:
             "A non-eager value on hardware without a matching backend raises when the model resolves its kernel."
         },
     )
-    qsa_attention_implementation: Literal["eager", "tilelang", "torch_npu"] = field(
+    qsa_attention_implementation: Literal["eager", "tilelang", "torch_npu", "npu_ascendc"] = field(
         default="eager",
         metadata={
             "help": "Qwen4-Exp QSA sparse attention. 'eager' expands the compact global token "
@@ -1556,8 +1556,13 @@ class OpsImplementationConfig:
             "'tilelang' gathers the selected K/V rows instead (requires tilelang, bf16, NVIDIA CUDA). "
             "'torch_npu' prunes per-query-chunk KV intervals with an int8 scatter mask and runs "
             "torch_npu.npu_fusion_attention (requires bf16, Ascend NPU). "
-            "Both fused backends cover training forward/backward only, no KV cache, and raise on an "
-            "attention mask. Nonzero attention dropout falls back to eager with a warning."
+            "'npu_ascendc' converts the same token selection to block ids and runs CANN "
+            "generic_block_sparse_attention / generic_block_sparse_attention_grad "
+            "(GBSA/GBSAG; requires cann_ops_transformer, FP16/BF16, equal Q/KV lengths). "
+            "Fused backends cover training forward/backward only and have no KV cache. "
+            "tilelang and torch_npu raise on an attention mask and fall back to eager for nonzero "
+            "dropout. npu_ascendc accepts only a 2D right-padding mask or None, rejects dropout, "
+            "and does not support Ulysses/CP."
         },
     )
     dsa_indexer_implementation: Literal["eager", "cudnn", "cann", "tilelang"] = field(
